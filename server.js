@@ -9,6 +9,7 @@ const core = require('./lib/core');
 const sched = require('./lib/sched');
 const extractor = require('./lib/extractor');
 const exporter = require('./lib/exporter');
+const apicrypto = require('./lib/apicrypto');
 
 const PORT = Number(process.env.PORT || process.env.LXHUB_PORT || 58059);
 const HOST = process.env.HOST || process.env.LXHUB_HOST || undefined;
@@ -54,11 +55,30 @@ function json(res, code, obj) {
 }
 
 function readBody(req) {
-  return new Promise(function (resolve) {
-    let data = '';
-    req.on('data', function (c) { if (data.length < 1e6) data += c; });
+  return new Promise(function (resolve, reject) {
+    const chunks = [];
+    let bytes = 0;
+    let tooLarge = false;
+    req.on('data', function (c) {
+      if (tooLarge) return;
+      bytes += c.length;
+      if (bytes > 1048576) {
+        tooLarge = true;
+        const err = new Error('Payload Too Large');
+        err.status = 413;
+        reject(err);
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
     req.on('end', function () {
+      if (tooLarge) return;
+      const data = Buffer.concat(chunks).toString('utf8');
       try { resolve(data ? JSON.parse(data) : {}); } catch (e) { resolve({}); }
+    });
+    req.on('error', function () {
+      if (!tooLarge) resolve({});
     });
   });
 }
@@ -87,7 +107,9 @@ function entryPublic(e) {
     mirrorCount: (e.mirrors || []).length, variantCount: (e.variants || []).length,
     repoPushAt: e.repoPushAt || 0, contentUpdatedAt: e.contentUpdatedAt || e.updatedAt,
     backendAlive: e.backendAlive != null ? e.backendAlive : -1,
-    updatedAt: e.updatedAt, lastOkAt: e.lastOkAt, hasBody: !!(e.hasBody || e.bodySha || e.body)
+    updatedAt: e.updatedAt, lastOkAt: e.lastOkAt,
+    hasBody: !!(e.hasBody || e.bodySha || e.body),
+    bodySha: e.bodySha || ''
   };
 }
 
@@ -146,7 +168,32 @@ async function handleApi(req, res, url) {
   }
 
   // ---- 供 Amusic 消费的 API 规则清单接口 ----
+  if (req.method === 'GET' && p === '/api/extracted-apis.enc') {
+    const encFile = path.join(PUBLIC_DIR, 'extracted_apis.enc');
+    try {
+      const txt = fs.readFileSync(encFile, 'utf8');
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+      return res.end(txt);
+    } catch (e) {
+      const secret = apicrypto.getSyncSecret();
+      const plainFile = path.join(PUBLIC_DIR, 'extracted_apis.json');
+      if (secret && fs.existsSync(plainFile)) {
+        try {
+          const payload = JSON.parse(fs.readFileSync(plainFile, 'utf8'));
+          const env = apicrypto.encryptJson(payload, secret);
+          const txt = JSON.stringify(env);
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-cache' });
+          return res.end(txt);
+        } catch (err) { /* noop */ }
+      }
+      return json(res, 404, { error: 'encrypted api bundle not ready' });
+    }
+  }
+
   if (req.method === 'GET' && p === '/api/extracted-apis') {
+    if (db.config.externalDeploy && !checkSession(req)) {
+      return json(res, 401, { error: 'unauthorized' });
+    }
     const f = path.join(PUBLIC_DIR, 'extracted_apis.json');
     try {
       const txt = fs.readFileSync(f, 'utf8');
@@ -239,7 +286,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && p === '/api/export') {
-    const matched = filterEntries({ status: 'alive', type: 'all', search: (q.search || '') });
+    const matched = filterEntries({ status: 'alive', type: q.type || 'all', search: (q.search || '') });
     const built = exporter.buildSourcesZip(matched, store);
     if (!built.zipBuffer) {
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
@@ -279,7 +326,7 @@ async function handleApi(req, res, url) {
       return json(res, 200, {
         config: {
           proxy: c.proxy || '', ghMirror: c.ghMirror || '', forceProxy: !!c.forceProxy,
-          useJsdelivr: !!c.useJsdelivr, ghTokenSet: !!c.ghToken,
+          useJsdelivr: !!c.useJsdelivr, ghTokenSet: !!store.getGhToken(c),
           autoCheck: c.autoCheck !== false, radarEnabled: c.radarEnabled !== false,
           radarDays: Number(c.radarDays) || 30,
           batchSize: Number(c.batchSize) || 60,
@@ -297,6 +344,7 @@ async function handleApi(req, res, url) {
 
     if (req.method === 'POST' && p === '/api/admin/extract') {
       const extRes = await extractor.buildAndSave(db, { log: store.log });
+      store.saveSoon();
       return json(res, 200, extRes);
     }
 
@@ -452,18 +500,33 @@ async function handleApi(req, res, url) {
     }
 
     if (req.method === 'GET' && p === '/api/admin/push/targets') {
+      const entryById = new Map();
+      db.entries.forEach(function (e) { entryById.set(e.id, e); });
       return json(res, 200, {
         ok: true,
         types: core.pusher.PUSH_TYPES.map(function (k) {
           return { type: k, label: core.pusher.ADAPTERS[k].label, hint: core.pusher.ADAPTERS[k].hint };
         }),
         targets: (db.config.pushTargets || []).map(function (t) {
+          const pm = t.pushedMap || {};
+          const pushedList = Object.keys(pm).map(function (id) {
+            const e = entryById.get(id);
+            const rec = pm[id];
+            return {
+              id: id,
+              name: (e && e.name) || id,
+              platforms: (e && e.platforms) || [],
+              platStatus: (e && e.platStatus) || null,
+              importedAt: (rec && typeof rec === 'object' ? rec.importedAt : 0) || 0
+            };
+          });
           return {
             id: t.id, name: t.name, type: t.type, baseUrl: t.baseUrl,
             tokenSet: !!t.token, username: t.username || '',
             enabled: t.enabled !== false,
-            pushed: t.pushedMap ? Object.keys(t.pushedMap).length : 0,
-            pushedMap: t.pushedMap || {}
+            pushed: Object.keys(pm).length,
+            pushedMap: pm,
+            pushedList: pushedList
           };
         })
       });
@@ -530,15 +593,20 @@ async function handleApi(req, res, url) {
       if (!adapter.revokeAll) return json(res, 400, { error: '该类型暂不支持撤回' });
       const byId = {};
       db.entries.forEach(function (e) { byId[e.id] = e.name; });
-      const names = Object.keys(t.pushedMap || {}).map(function (id) { return byId[id]; }).filter(Boolean);
+      const pm = t.pushedMap || {};
+      const targetIds = Array.isArray(body.entryIds) && body.entryIds.length
+        ? body.entryIds.filter(function (id) { return pm[id] != null; })
+        : Object.keys(pm);
+      const names = targetIds.map(function (id) { return byId[id] || id; }).filter(Boolean);
       if (!names.length) return json(res, 200, { ok: true, removed: [] });
       let r;
       try { r = await adapter.revokeAll(t, names); }
       catch (e) { r = { ok: false, error: String((e && e.message) || e).slice(0, 160) }; }
       if (r.ok && r.removed && r.removed.length) {
-        const removedSet = new Set(r.removed.map(function (n) { return String(n).toLowerCase(); }));
-        Object.keys(t.pushedMap || {}).forEach(function (id) {
-          if (removedSet.has(String(byId[id] || '').toLowerCase())) delete t.pushedMap[id];
+        const removedSet = new Set(r.removed.map(function (n) { return String(n).toLowerCase().replace(/\.js$/i, ''); }));
+        targetIds.forEach(function (id) {
+          const nm = String(byId[id] || id).toLowerCase().replace(/\.js$/i, '');
+          if (removedSet.has(nm)) delete t.pushedMap[id];
         });
         store.saveSoon();
       }
@@ -548,9 +616,15 @@ async function handleApi(req, res, url) {
     if (req.method === 'POST' && p === '/api/admin/push/start') {
       if (core.task.running) return json(res, 409, { error: '已有任务进行中' });
       const body = await readBody(req);
+      const wantEntries = Array.isArray(body.entryIds) ? body.entryIds : null;
+      const entryCount = db.entries.filter(function (e) {
+        const st = e.scriptType || (e.isSource ? 'source' : 'unknown');
+        return (!wantEntries || wantEntries.indexOf(e.id) >= 0) &&
+          e.status === 'ok' && store.getBody(e) && st !== 'unknown' && !e.sample;
+      }).length;
       core.pushAll(ua, '手动', { targets: body.targets, entryIds: body.entryIds })
         .catch(function (e) { console.error('[push]', e); });
-      return json(res, 200, { ok: true, started: true });
+      return json(res, 200, { ok: true, started: true, entries: entryCount });
     }
 
     if (req.method === 'DELETE' && p.startsWith('/api/admin/repos/')) {
@@ -726,8 +800,8 @@ const server = http.createServer(function (req, res) {
   }
   if (url.pathname.startsWith('/api/')) {
     Promise.resolve(handleApi(req, res, url)).catch(function (e) {
-      console.error('[api]', e);
-      try { json(res, 500, { error: e.message }); } catch (_) { /* noop */ }
+      if (!e || e.status !== 413) console.error('[api]', e);
+      try { json(res, (e && e.status) || 500, { error: e.message }); } catch (_) { /* noop */ }
     });
   } else {
     serveStatic(req, res, url);

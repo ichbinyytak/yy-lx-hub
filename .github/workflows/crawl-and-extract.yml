@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   crawl-and-extract:
@@ -35,9 +35,11 @@ jobs:
         env:
           CI: 'true'
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AMUSIC_SYNC_KEY: ${{ secrets.AMUSIC_SYNC_KEY }}
+          AMUSIC_SYNC_SECRET: ${{ secrets.AMUSIC_SYNC_SECRET }}
         run: node bin/extract.js
 
-      - name: Print summary report
+      - name: Print summary report (sanitized)
         run: |
           node -e "
             const fs = require('fs');
@@ -51,20 +53,46 @@ jobs:
             }
             if (fs.existsSync('public/extracted_apis.json')) {
               const a = JSON.parse(fs.readFileSync('public/extracted_apis.json', 'utf8'));
-              console.log('=== 黄金 API 摘要 ===');
-              console.log('独立端点总数:', a.totalEndpoints);
+              console.log('=== 黄金 API 摘要（已脱敏，不含密钥/路径） ===');
+              console.log('独立端点总数:', a.totalEndpoints, '| 密文包已生成:', fs.existsSync('public/extracted_apis.enc'));
               for (const ep of a.endpoints) {
-                console.log(' - [' + ep.platform + ']', ep.method, ep.urlTemplate.slice(0, 75), '(' + ep.sampleLatencyMs + 'ms)');
+                let host = 'unknown';
+                try { host = new URL(ep.urlTemplate).hostname; } catch (e) {}
+                console.log(' - [' + ep.platform + '][' + (ep.matchMode || 'id') + ']', ep.method, host, '(' + ep.sampleLatencyMs + 'ms)');
               }
             }
           "
 
-      - name: Upload verified outputs (sources.zip, data.json, extracted_apis.json)
+      - name: Publish LX sources & encrypted Amusic bundle to Release (sync-latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FILES=()
+          [ -f public/sources.zip ] && FILES+=(public/sources.zip)
+          [ -f public/data.json ] && FILES+=(public/data.json)
+          [ -f public/extracted_apis.enc ] && FILES+=(public/extracted_apis.enc)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "没有可发布的文件，跳过 Release 更新"
+            exit 0
+          fi
+          NOTES="自动巡航更新时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          - 洛雪生态可用脚本包: sources.zip (明文，可直接导入洛雪)
+          - 洛雪生态状态清单: data.json (明文)
+          - Amusic 黄金接口包: extracted_apis.enc (认证强加密，仅 Amusic 持有密钥可解)"
+          if gh release view sync-latest >/dev/null 2>&1; then
+            gh release upload sync-latest "${FILES[@]}" --clobber
+            gh release edit sync-latest --notes "$NOTES"
+          else
+            gh release create sync-latest "${FILES[@]}" --title "yy-lx-hub 每日自动同步产物" --notes "$NOTES"
+          fi
+
+      - name: Upload verified outputs (sources.zip, data.json, extracted_apis.enc)
         uses: actions/upload-artifact@v4
         with:
           name: yy-lx-hub-outputs
           retention-days: 14
+          if-no-files-found: ignore
           path: |
             public/sources.zip
             public/data.json
-            public/extracted_apis.json
+            public/extracted_apis.enc

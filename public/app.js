@@ -366,7 +366,7 @@
     var mask = $('zipMask');
     $('zipMsg').textContent = '正在打包 ' + n + ' 个音源…';
     mask.style.display = 'flex';
-    fetch('/api/export?search=' + encodeURIComponent($('q').value.trim())).then(function (r) {
+    fetch('/api/export?search=' + encodeURIComponent($('q').value.trim()) + '&type=' + encodeURIComponent($('tp').value)).then(function (r) {
       var isZip = (r.headers.get('content-type') || '').indexOf('zip') >= 0;
       var m = (r.headers.get('content-disposition') || '').match(/filename="?([^";]+)"?/);
       var fname = m ? m[1] : ('lx-sources-' + new Date().toISOString().slice(0, 10) + '.zip');

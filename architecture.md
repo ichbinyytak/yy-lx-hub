@@ -185,6 +185,7 @@ yy-lx-hub/
 │   ├── templatizer.js        # 模板化与参数反推引擎
 │   ├── verifier.js           # 多曲目纯 HTTP 验真引擎 (魔数 + >1.2MB)
 │   ├── extractor.js          # API 规则合并、交叉验真与生命周期清理
+│   ├── apicrypto.js          # 零依赖 AEAD 密文封装器 (供 Amusic 及其他外部项目互通)
 │   ├── exporter.js           # 带平台标签的 ZIP 打包器与静态 data.json 生成器
 │   ├── zip.js                # 零依赖 ZIP 打包与安全解压工具
 │   ├── netguard.js           # SSRF 出网防护与重定向追踪
@@ -212,5 +213,27 @@ yy-lx-hub/
    - 挂载 `lib/sniffer.js` 与 `lib/templatizer.js`，自动提炼 URL 模板、自建 Token、Cookie 及参数映射；
    - 接入第二首歌曲 `lib/verifier.js` 魔数门禁验真。
 4. **第四阶段：双生态联调与自愈闭环**
-   - 生成 `public/extracted_apis.json` 与 `sources.zip`；
+   - 生成 `public/extracted_apis.json`、`public/extracted_apis.enc` 与 `sources.zip`；
    - 与 `Amusic` 播放器完成拉取与歌曲播放闭环联调。
+
+---
+
+## 六、 跨项目对接与密文速查（🤖 AI / 二次开发一眼看懂）
+
+如果你（或 AI）正在将本项目的可用 API 清单接入 **Amusic** 或其他新项目，直接按以下既定事实对接即可，**无需任何人工 Secret 配置**：
+
+1. **公开发布产物地址（GitHub Release `sync-latest`，每日 04:00 更新）**
+   - **Amusic / 原生播放器专用加密 API 包**：`https://github.com/ichbinyytak/yy-lx-hub/releases/download/sync-latest/extracted_apis.enc`
+     *(自建 Docker 服务也可直接请求 `/api/extracted-apis.enc`)*
+   - **洛雪生态可用脚本包（明文免密）**：`https://github.com/ichbinyytak/yy-lx-hub/releases/download/sync-latest/sources.zip`
+   - **洛雪生态状态清单（明文免密）**：`https://github.com/ichbinyytak/yy-lx-hub/releases/download/sync-latest/data.json`
+
+2. **加解密协议与内置密钥（0 第三方依赖）**
+   - **直接复用模块**：Node.js 复制 `lib/apicrypto.js`（`decryptJson`）；Python 复制 `Amusic/api_crypto.py`（`decrypt_json`）。
+   - **内置默认密码**：`yy-lx-hub::amusic::auto-sync-v1`（若设置了环境变量 `AMUSIC_SYNC_KEY` 或 `AMUSIC_SYNC_SECRET` 则自动优先使用环境变量）。
+   - **算法规格**：`PBKDF2-HMAC-SHA256`（100,000 次迭代，输出 64B = `32B encKey + 32B macKey`）→ `SHA256-CTR` 异或流加密 → `HMAC-SHA256(macKey, "yy-lx-hub:v1:" + salt + nonce + ct)` 认证校验。
+   - **密文信封格式（JSON）**：`{ "v": 1, "alg": "PBKDF2-SHA256-CTR-HMAC", "iter": 100000, "salt": "<b64 16B>", "nonce": "<b64 16B>", "ct": "<b64>", "mac": "<b64 32B>" }`。
+
+3. **多仓错峰自动同步节奏（北京时间）**
+   - **04:00 (`0 20 * * *`)**：`yy-lx-hub` 完成巡航、双曲验真并更新 `sync-latest` Release；
+   - **05:00 (`0 21 * * *`)**：`Amusic`（或其他下游项目）拉取 `extracted_apis.enc` 内存解密测速并更新自身缓存。

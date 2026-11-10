@@ -12,6 +12,7 @@ const store = require('../lib/store');
 const core = require('../lib/core');
 const radar = require('../lib/radar');
 const exporter = require('../lib/exporter');
+const apicrypto = require('../lib/apicrypto');
 
 const args = process.argv.slice(2);
 const radarOnly = args.indexOf('--radar-only') >= 0;
@@ -24,7 +25,6 @@ function tsPrefix() {
 
 (async function main() {
   const db = store.getDb();
-  if (process.env.GITHUB_TOKEN) db.config.ghToken = process.env.GITHUB_TOKEN;
 
   store.setLogListener(function (line) {
     console.log(tsPrefix(), line.msg);
@@ -39,7 +39,7 @@ function tsPrefix() {
 
   const t0 = Date.now();
   console.log('=== yy-lx-hub 全流程巡航与验证启动 ===');
-  console.log('运行模式:', process.env.CI ? 'GitHub Actions / CI' : '本地终端', '| GITHUB_TOKEN:', db.config.ghToken ? '已配置' : '未配置(匿名限频)');
+  console.log('运行模式:', process.env.CI ? 'GitHub Actions / CI' : '本地终端', '| GITHUB_TOKEN:', store.getGhToken(db.config) ? '已配置' : '未配置(匿名限频)', '| AMUSIC_SYNC_KEY:', apicrypto.getSyncSecret() ? '已配置(同步加密)' : '未配置(仅本地明文)');
   console.log('存量档案:', db.entries.length, '个历史脚本 |', (db.apiPool || []).length, '条历史 API');
 
   db.config.autoCheck = true;
@@ -50,17 +50,21 @@ function tsPrefix() {
     process.exit(1);
   }
 
-  // 产出带 [平台标签] 文件名与 00_平台适用清单.txt 的 sources.zip
-  const built = exporter.buildSourcesZip(db.entries, store);
-  if (built.zipBuffer) {
-    const zipPath = path.join(__dirname, '..', 'public', 'sources.zip');
-    fs.writeFileSync(zipPath, built.zipBuffer);
-    console.log('✓ 洛雪生态 ZIP 已生成:', zipPath, '(共 ' + built.usableCount + ' 个可用脚本，独立名 ' + built.uniqueNames + ' 个)');
+  const publicDir = path.join(__dirname, '..', 'public');
+  const zipPath = path.join(publicDir, 'sources.zip');
+  const dataPath = path.join(publicDir, 'data.json');
+  if (fs.existsSync(zipPath)) {
+    const builtInfo = exporter.buildSourcesZip(db.entries, store);
+    console.log('✓ 洛雪生态 ZIP 已生成:', zipPath, '(共 ' + builtInfo.usableCount + ' 个可用脚本，独立名 ' + builtInfo.uniqueNames + ' 个)');
   }
-
-  // 产出静态看板数据 public/data.json
-  const dataJson = exporter.buildStaticDataJson(db, store);
-  console.log('✓ 静态清单 data.json 已生成: 可用 ' + dataJson.usableCount + ' 个 | 平台分布:', JSON.stringify(dataJson.platformStats));
+  if (fs.existsSync(dataPath)) {
+    const dataJson = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+    console.log('✓ 静态清单 data.json 已生成: 可用 ' + dataJson.usableCount + ' 个 | 平台分布:', JSON.stringify(dataJson.platformStats));
+  }
+  const encPath = path.join(publicDir, 'extracted_apis.enc');
+  if (fs.existsSync(encPath)) {
+    console.log('✓ Amusic 加密 API 包已生成:', encPath, '(' + fs.statSync(encPath).size + ' bytes)');
+  }
 
   store.saveNow();
   const sec = ((Date.now() - t0) / 1000).toFixed(1);

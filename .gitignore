@@ -4,5 +4,6 @@ data/
 .DS_Store
 .env
 public/extracted_apis.json
+public/extracted_apis.enc
 public/sources.zip
 public/data.json

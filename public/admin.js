@@ -436,7 +436,7 @@
   function renderManifest(m) {
     manifestState = m || manifestState;
     var el = $('manifestInfo');
-    if (!el) return;
+    if (!el || !manifestState) return;
     if (manifestState && manifestState.version) {
       el.textContent = '清单 v' + manifestState.version + '（' + manifestState.count + ' 个仓库' +
         (manifestState.updatedAt ? '，更新于 ' + manifestState.updatedAt : '') + '）· 远端自动维护';
