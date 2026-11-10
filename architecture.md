@@ -13,8 +13,8 @@
 由于本项目后续将常态化托管在 **GitHub Actions** 定时自动运行，所有模块的设计与修改必须时刻牢记以下 5 条物理约束：
 
 1. **无状态一次性运行（Stateless Runner）**：
-   - GitHub Actions 的运行容器每次触发都是全新的、跑完即销毁，**不能强依赖常驻内存的 `server.js` 定时任务**。
-   - 必须提供独立且完备的命令行单次入口（如 `bin/extract.js`），支持**“启动 → 雷达扫描 → 并发抓取 → 串行验源 → 落地静态产物 → 优雅退出”**的完整闭环。
+   - 本项目定位为纯无头命令行 / GitHub Actions 定时流水线（已移除 Web 主页与常驻 HTTP 服务），运行容器每次触发都是全新的、跑完即销毁。
+   - 通过独立且完备的命令行单次入口（`bin/extract.js`），完成**“启动 → 雷达扫描 → 并发抓取 → 串行验源 → 落地产物并发布 Release → 优雅退出”**的完整闭环。
 2. **严格的时间预算与并发控制**：
    - Actions 单次任务不宜超过 10~15 分钟。因此抓取必须使用并发池（如 6 路并发），每个仓库必须设置合理的文件数上限，单次 HTTP 请求必须有硬性超时中断（`AbortSignal.timeout`），杜绝拖死整个工作流。
 3. **原生消费 `GITHUB_TOKEN` 突破限频**：
@@ -189,15 +189,12 @@ yy-lx-hub/
 │   ├── exporter.js           # 带平台标签的 ZIP 打包器与静态 data.json 生成器
 │   ├── zip.js                # 零依赖 ZIP 打包与安全解压工具
 │   ├── netguard.js           # SSRF 出网防护与重定向追踪
-│   ├── pusher.js             # 洛雪服务端灌入适配器
-│   ├── sched.js              # 本地长驻定时调度器
 │   └── store.js              # 冷热分离数据库与脚本清理
-├── public/
-│   ├── index.html            # 极简健康度雷达看板
-│   ├── extracted_apis.json   # 产物 1：专供 Amusic 消费的黄金 API 清单
-│   ├── sources.zip           # 产物 2：带平台标签前缀的洛雪可用脚本压缩包
-│   └── data.json             # 产物 3：前端静态看板清单
-└── server.js                 # Web 后台服务 (保留原版交互与导出)
+└── public/                   # 无状态运行产物输出目录（不托管 Web 主页）
+    ├── extracted_apis.json   # 产物 1（本地）：Amusic 明文 API 清单
+    ├── extracted_apis.enc    # 产物 1（发布）：专供 Amusic 消费的认证密文包
+    ├── sources.zip           # 产物 2（发布）：带平台标签前缀的洛雪可用脚本压缩包
+    └── data.json             # 产物 3（发布）：可用源统计清单
 ```
 
 ---
@@ -224,7 +221,6 @@ yy-lx-hub/
 
 1. **公开发布产物地址（GitHub Release `sync-latest`，每日 04:00 更新）**
    - **Amusic / 原生播放器专用加密 API 包**：`https://github.com/ichbinyytak/yy-lx-hub/releases/download/sync-latest/extracted_apis.enc`
-     *(自建 Docker 服务也可直接请求 `/api/extracted-apis.enc`)*
    - **洛雪生态可用脚本包（明文免密）**：`https://github.com/ichbinyytak/yy-lx-hub/releases/download/sync-latest/sources.zip`
    - **洛雪生态状态清单（明文免密）**：`https://github.com/ichbinyytak/yy-lx-hub/releases/download/sync-latest/data.json`
 
