@@ -63,36 +63,45 @@ jobs:
             }
           "
 
-      - name: Publish LX sources & encrypted Amusic bundle to Release (sync-latest)
+      - name: Publish LX sources.zip to Release (sync-latest)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          FILES=()
-          [ -f public/sources.zip ] && FILES+=(public/sources.zip)
-          [ -f public/data.json ] && FILES+=(public/data.json)
-          [ -f public/extracted_apis.enc ] && FILES+=(public/extracted_apis.enc)
-          if [ ${#FILES[@]} -eq 0 ]; then
-            echo "没有可发布的文件，跳过 Release 更新"
+          if [ ! -f public/sources.zip ]; then
+            echo "没有可发布的 sources.zip，跳过 Release 更新"
             exit 0
           fi
           NOTES="自动巡航更新时间: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
-          - 洛雪生态可用脚本包: sources.zip (明文，可直接导入洛雪)
-          - 洛雪生态状态清单: data.json (明文)
-          - Amusic 黄金接口包: extracted_apis.enc (认证强加密，仅 Amusic 持有密钥可解)"
+          - 仅包含从全网公开仓库采集并实测通过的洛雪可用音源 .js 脚本（sources.zip）"
           if gh release view sync-latest >/dev/null 2>&1; then
-            gh release upload sync-latest "${FILES[@]}" --clobber
+            gh release upload sync-latest public/sources.zip --clobber
+            gh release delete-asset sync-latest data.json -y >/dev/null 2>&1 || true
+            gh release delete-asset sync-latest extracted_apis.enc -y >/dev/null 2>&1 || true
             gh release edit sync-latest --notes "$NOTES"
           else
-            gh release create sync-latest "${FILES[@]}" --title "yy-lx-hub 每日自动同步产物" --notes "$NOTES"
+            gh release create sync-latest public/sources.zip --title "yy-lx-hub 每日可用洛雪音源包" --notes "$NOTES"
           fi
 
-      - name: Upload verified outputs (sources.zip, data.json, extracted_apis.enc)
+      - name: Publish encrypted Amusic bundle to dedicated Release (amusic-sync)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f public/extracted_apis.enc ]; then
+            echo "没有可发布的 extracted_apis.enc，跳过"
+            exit 0
+          fi
+          NOTES="Amusic 专用加密接口同步包（自动更新: $(date -u '+%Y-%m-%d %H:%M:%S UTC')）"
+          if gh release view amusic-sync >/dev/null 2>&1; then
+            gh release upload amusic-sync public/extracted_apis.enc --clobber
+            gh release edit amusic-sync --notes "$NOTES"
+          else
+            gh release create amusic-sync public/extracted_apis.enc --prerelease --title "Amusic 专用加密同步包" --notes "$NOTES"
+          fi
+
+      - name: Upload verified LX sources archive (sources.zip only)
         uses: actions/upload-artifact@v4
         with:
           name: yy-lx-hub-outputs
           retention-days: 14
           if-no-files-found: ignore
-          path: |
-            public/sources.zip
-            public/data.json
-            public/extracted_apis.enc
+          path: public/sources.zip

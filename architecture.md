@@ -219,10 +219,9 @@ yy-lx-hub/
 
 如果你（或 AI）正在将本项目的可用 API 清单接入 **Amusic** 或其他新项目，直接按以下既定事实对接即可，**无需任何人工 Secret 配置**：
 
-1. **公开发布产物地址（GitHub Release `sync-latest`，每日 04:00 更新）**
-   - **Amusic / 原生播放器专用加密 API 包**：`https://github.com/ichbinyytak/yy-lx-hub/releases/download/sync-latest/extracted_apis.enc`
-   - **洛雪生态可用脚本包（明文免密）**：`https://github.com/ichbinyytak/yy-lx-hub/releases/download/sync-latest/sources.zip`
-   - **洛雪生态状态清单（明文免密）**：`https://github.com/ichbinyytak/yy-lx-hub/releases/download/sync-latest/data.json`
+1. **公开发布产物地址（GitHub Release，每日 04:00 更新）**
+   - **洛雪生态可用脚本包（`sync-latest`，仅含公网 `.js` 音源脚本）**：`https://github.com/ichbinyytak/yy-lx-hub/releases/download/sync-latest/sources.zip`
+   - **Amusic 专用加密 API 包（`amusic-sync` 独立通道）**：`https://github.com/ichbinyytak/yy-lx-hub/releases/download/amusic-sync/extracted_apis.enc`
 
 2. **加解密协议与内置密钥（0 第三方依赖）**
    - **直接复用模块**：Node.js 复制 `lib/apicrypto.js`（`decryptJson`）；Python 复制 `Amusic/api_crypto.py`（`decrypt_json`）。
