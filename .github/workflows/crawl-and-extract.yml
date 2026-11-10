@@ -1,0 +1,70 @@
+name: yy-lx-hub Crawl & Verify
+
+on:
+  schedule:
+    # 每日北京时间凌晨 04:00 (UTC 20:00) 自动巡航
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  crawl-and-extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Restore living archive (data/)
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: yy-lx-hub-data-${{ github.run_id }}
+          restore-keys: |
+            yy-lx-hub-data-
+
+      - name: Run dynamic radar, sandbox verify & API extraction
+        env:
+          CI: 'true'
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node bin/extract.js
+
+      - name: Print summary report
+        run: |
+          node -e "
+            const fs = require('fs');
+            if (fs.existsSync('public/data.json')) {
+              const d = JSON.parse(fs.readFileSync('public/data.json', 'utf8'));
+              console.log('=== 洛雪可用源摘要 ===');
+              console.log('可用总数:', d.usableCount, '| 平台分布:', JSON.stringify(d.platformStats));
+              for (const it of d.items) {
+                console.log(' -', '[' + it.platforms.join('+') + ']', it.name, '(v' + (it.version || '?') + ')');
+              }
+            }
+            if (fs.existsSync('public/extracted_apis.json')) {
+              const a = JSON.parse(fs.readFileSync('public/extracted_apis.json', 'utf8'));
+              console.log('=== 黄金 API 摘要 ===');
+              console.log('独立端点总数:', a.totalEndpoints);
+              for (const ep of a.endpoints) {
+                console.log(' - [' + ep.platform + ']', ep.method, ep.urlTemplate.slice(0, 75), '(' + ep.sampleLatencyMs + 'ms)');
+              }
+            }
+          "
+
+      - name: Upload verified outputs (sources.zip, data.json, extracted_apis.json)
+        uses: actions/upload-artifact@v4
+        with:
+          name: yy-lx-hub-outputs
+          retention-days: 14
+          path: |
+            public/sources.zip
+            public/data.json
+            public/extracted_apis.json

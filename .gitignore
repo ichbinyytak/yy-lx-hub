@@ -1,0 +1,8 @@
+node_modules/
+data/
+*.log
+.DS_Store
+.env
+public/extracted_apis.json
+public/sources.zip
+public/data.json

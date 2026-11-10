@@ -1,0 +1,15 @@
+{
+  "name": "yy-lx-hub",
+  "version": "2.0.0",
+  "description": "全网音源动态巡航、高能效沙箱质检与双生态（洛雪生态 + Amusic 原生）双产出超级中枢",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "extract": "node bin/extract.js",
+    "radar": "node bin/extract.js --radar-only"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
